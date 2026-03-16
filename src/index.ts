@@ -122,8 +122,14 @@ export default {
 
         // Handle incoming call - answer and start streaming
         if (eventType === "call.initiated" && payload.direction === "incoming") {
-          const workerUrl = url.origin;
-          await answerCall(env, payload.call_control_id, workerUrl);
+          const webhookUrl = `${url.origin}/webhook/call`;
+          console.log(`[Webhook] Answering call ${payload.call_control_id}, webhook: ${webhookUrl}`);
+          try {
+            await answerCall(env, payload.call_control_id, webhookUrl);
+            console.log("[Webhook] Answer call succeeded");
+          } catch (err) {
+            console.error("[Webhook] Answer call failed:", err);
+          }
 
           // Initialize DO for inbound call
           const callId = env.CALL_SESSION.idFromName(sessionId);
