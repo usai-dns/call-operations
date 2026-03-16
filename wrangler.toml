@@ -13,12 +13,13 @@ bindings = [
 tag = "v1"
 new_classes = ["CallSession", "SmsSession"]
 
-# Secrets are set via .dev.vars locally or wrangler secret for production
-# TELNYX_API_TOKEN - Telnyx API v2 bearer token
-# GEMINI_API_TOKEN - Google Gemini API token
-# TELNYX_CONNECTION_ID - Telnyx SIP connection/app ID
+# Secrets (set via .dev.vars locally or `wrangler secret` for production):
+# TELNYX_API_KEY        - Telnyx API v2 bearer token
+# GEMINI_API_KEY        - Google Gemini API key
+# DEEPGRAM_API_KEY      - Deepgram API key
+# TELNYX_CONNECTION_ID  - Telnyx SIP connection/app ID
+# TELNYX_PHONE_NUMBER   - Telnyx phone number (E.164)
 # TELNYX_MESSAGING_PROFILE_ID - Telnyx messaging profile ID
-# TELNYX_PHONE_NUMBER - Telnyx phone number (E.164)
 
 [observability]
 [observability.logs]
@@ -27,4 +28,5 @@ enabled = true
 enabled = true
 
 [vars]
-# These will be overridden by secrets in production if set
+LOG_LEVEL = "debug"
+LOG_FORMAT = "pretty"
