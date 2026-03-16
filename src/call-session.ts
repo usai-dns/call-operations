@@ -1,6 +1,19 @@
 import type { Env, CallState } from "./types";
 import { geminiWsUrl, buildSetupMessage, parseGeminiResponse } from "./gemini";
-import { telnyxToGemini, geminiToTelnyx } from "./audio";
+import { downsample24kTo8k } from "./audio";
+
+/** Convert Gemini PCM 24kHz base64 → L16 PCM 8kHz base64 for Telnyx */
+function geminiPcmToTelnyxL16(base64Pcm: string): string {
+  const binary = atob(base64Pcm);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const pcm24k = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length >> 1);
+  const pcm8k = downsample24kTo8k(pcm24k);
+  const outBytes = new Uint8Array(pcm8k.buffer, pcm8k.byteOffset, pcm8k.byteLength);
+  let out = "";
+  for (let i = 0; i < outBytes.length; i++) out += String.fromCharCode(outBytes[i]);
+  return btoa(out);
+}
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI phone assistant. You are answering a live phone call.
 Be conversational, friendly, and concise. Keep responses brief since this is a voice conversation.
@@ -124,14 +137,13 @@ export class CallSession implements DurableObject {
 
       case "audio":
         if (parsed.audioData && this.telnyxWs) {
-          // Convert Gemini PCM 24kHz → Telnyx mu-law 8kHz and send back
+          // Gemini outputs PCM 24kHz, downsample to 8kHz L16 for Telnyx
           try {
-            const mulawBase64 = geminiToTelnyx(parsed.audioData);
+            const pcm8kBase64 = geminiPcmToTelnyxL16(parsed.audioData);
             this.telnyxWs.send(JSON.stringify({
               event: "media",
               media: {
-                track: "outbound",
-                payload: mulawBase64,
+                payload: pcm8kBase64,
               },
             }));
           } catch (err) {
@@ -165,19 +177,15 @@ export class CallSession implements DurableObject {
             console.log("[CallSession] Received Telnyx audio but Gemini not ready yet");
           }
           if (this.geminiWs && this.geminiReady) {
-            try {
-              const pcmBase64 = telnyxToGemini(data.media.payload);
-              this.geminiWs.send(JSON.stringify({
-                realtimeInput: {
-                  mediaChunks: [{
-                    mimeType: "audio/pcm;rate=16000",
-                    data: pcmBase64,
-                  }],
-                },
-              }));
-            } catch (err) {
-              console.error("[CallSession] Audio conversion error (Telnyx→Gemini):", err);
-            }
+            // Telnyx sends L16 PCM at 8kHz, Gemini accepts audio/pcm at various rates
+            this.geminiWs.send(JSON.stringify({
+              realtimeInput: {
+                mediaChunks: [{
+                  mimeType: "audio/pcm;rate=8000",
+                  data: data.media.payload,
+                }],
+              },
+            }));
           }
         } else if (data.event === "start") {
           console.log(`[CallSession] Telnyx stream started, streamId: ${data.stream_id}`);

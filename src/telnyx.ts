@@ -88,7 +88,9 @@ export async function startStream(
     "POST",
     {
       stream_url: streamUrl,
-      stream_track: "both_tracks",
+      stream_track: "inbound_track",
+      stream_bidirectional_mode: "rtp",
+      stream_bidirectional_codec: "L16",
       enable_dialogflow: false,
     }
   );
