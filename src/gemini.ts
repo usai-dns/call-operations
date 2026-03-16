@@ -1,6 +1,7 @@
 import type { GeminiSessionConfig } from "./types";
 
-const GEMINI_WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+// Cloudflare Workers require https:// (not wss://) for outbound WebSocket fetch()
+const GEMINI_WS_BASE = "https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
 /** Build the Gemini Audio Live WebSocket URL */
 export function geminiWsUrl(apiToken: string): string {

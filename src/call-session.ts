@@ -75,18 +75,21 @@ export class CallSession implements DurableObject {
 
       const ws = resp.webSocket;
       if (!ws) {
-        console.error("[CallSession] Failed to establish Gemini WebSocket — no webSocket on response");
+        console.error(`[CallSession] Failed to establish Gemini WebSocket — no webSocket on response. Status: ${resp.status}, statusText: ${resp.statusText}`);
+        const text = await resp.text().catch(() => "could not read body");
+        console.error(`[CallSession] Response body: ${text}`);
         return;
       }
 
       ws.accept();
       this.geminiWs = ws;
+      console.log("[CallSession] Gemini WebSocket connected successfully");
 
       // Send setup message
       const systemPrompt = this.callState?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
       const setupMsg = buildSetupMessage(systemPrompt);
       ws.send(JSON.stringify(setupMsg));
-      console.log("[CallSession] Gemini setup message sent");
+      console.log("[CallSession] Gemini setup message sent, awaiting setup_complete");
 
       // Listen for Gemini responses
       ws.addEventListener("message", (event) => {
@@ -158,6 +161,9 @@ export class CallSession implements DurableObject {
 
         if (data.event === "media" && data.media?.payload) {
           // Forward audio from Telnyx to Gemini
+          if (!this.geminiReady) {
+            console.log("[CallSession] Received Telnyx audio but Gemini not ready yet");
+          }
           if (this.geminiWs && this.geminiReady) {
             try {
               const pcmBase64 = telnyxToGemini(data.media.payload);
