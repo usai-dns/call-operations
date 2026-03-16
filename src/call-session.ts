@@ -29,6 +29,7 @@ export class CallSession implements DurableObject {
   private telnyxWs: WebSocket | null = null;
   private geminiWs: WebSocket | null = null;
   private geminiReady = false;
+  private geminiConnecting = false;
   private loggedGeminiNotReady = false;
 
   constructor(state: DurableObjectState, env: Env) {
@@ -72,8 +73,10 @@ export class CallSession implements DurableObject {
     this.state.acceptWebSocket(server);
     this.telnyxWs = server;
 
-    // Connect to Gemini once Telnyx WS is established
-    this.connectGemini();
+    // Connect to Gemini — use blockConcurrencyWhile to ensure it completes
+    this.state.blockConcurrencyWhile(async () => {
+      await this.connectGemini();
+    });
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -82,7 +85,7 @@ export class CallSession implements DurableObject {
   private async connectGemini(): Promise<void> {
     const url = geminiWsUrl(this.env.GEMINI_API_TOKEN);
 
-    console.log(`[CallSession] Attempting Gemini WebSocket connection...`);
+    console.log(`[CallSession] Attempting Gemini WebSocket connection (hasApiToken=${!!this.env.GEMINI_API_TOKEN})...`);
     try {
       const resp = await fetch(url, {
         headers: { Upgrade: "websocket" },
@@ -169,6 +172,12 @@ export class CallSession implements DurableObject {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    // Lazy-connect Gemini if not yet connected (handles DO hibernation wake-up)
+    if (!this.geminiWs && !this.geminiConnecting) {
+      console.log("[CallSession] webSocketMessage: Gemini not connected, attempting connection...");
+      this.geminiConnecting = true;
+      this.connectGemini().finally(() => { this.geminiConnecting = false; });
+    }
     // Telnyx sends JSON frames with media data
     if (typeof message === "string") {
       try {
