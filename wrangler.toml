@@ -1,0 +1,22 @@
+name = "call-operations"
+main = "src/index.ts"
+compatibility_date = "2025-03-10"
+compatibility_flags = ["nodejs_compat"]
+
+[durable_objects]
+bindings = [
+  { name = "CALL_SESSION", class_name = "CallSession" },
+  { name = "SMS_SESSION", class_name = "SmsSession" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["CallSession", "SmsSession"]
+
+# Environment variables (set via wrangler secret)
+# TELNYX_API_KEY - Telnyx API v2 key
+# TELNYX_API_TOKEN - Telnyx API v2 bearer token
+# GEMINI_API_KEY - Google Gemini API key
+# TELNYX_CONNECTION_ID - Telnyx SIP connection/app ID
+# TELNYX_MESSAGING_PROFILE_ID - Telnyx messaging profile ID
+# TELNYX_PHONE_NUMBER - Telnyx phone number (E.164)
