@@ -29,6 +29,7 @@ export class CallSession implements DurableObject {
   private telnyxWs: WebSocket | null = null;
   private geminiWs: WebSocket | null = null;
   private geminiReady = false;
+  private loggedGeminiNotReady = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -81,10 +82,12 @@ export class CallSession implements DurableObject {
   private async connectGemini(): Promise<void> {
     const url = geminiWsUrl(this.env.GEMINI_API_TOKEN);
 
+    console.log(`[CallSession] Attempting Gemini WebSocket connection...`);
     try {
       const resp = await fetch(url, {
         headers: { Upgrade: "websocket" },
       });
+      console.log(`[CallSession] Gemini fetch returned status=${resp.status}, hasWebSocket=${!!resp.webSocket}`);
 
       const ws = resp.webSocket;
       if (!ws) {
@@ -173,8 +176,9 @@ export class CallSession implements DurableObject {
 
         if (data.event === "media" && data.media?.payload) {
           // Forward audio from Telnyx to Gemini
-          if (!this.geminiReady) {
-            console.log("[CallSession] Received Telnyx audio but Gemini not ready yet");
+          if (!this.geminiReady && !this.loggedGeminiNotReady) {
+            console.log(`[CallSession] Received Telnyx audio but Gemini not ready yet (geminiWs=${!!this.geminiWs})`);
+            this.loggedGeminiNotReady = true;
           }
           if (this.geminiWs && this.geminiReady) {
             // Telnyx sends L16 PCM at 8kHz, Gemini accepts audio/pcm at various rates
