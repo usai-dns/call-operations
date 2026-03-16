@@ -30,6 +30,7 @@ export class CallSession implements DurableObject {
   private geminiWs: WebSocket | null = null;
   private geminiReady = false;
   private geminiConnecting = false;
+  private geminiConnectionFailed = false;
   private loggedGeminiNotReady = false;
 
   constructor(state: DurableObjectState, env: Env) {
@@ -119,15 +120,21 @@ export class CallSession implements DurableObject {
         console.log(`[CallSession] Gemini WS closed: ${event.code} ${event.reason}`);
         this.geminiWs = null;
         this.geminiReady = false;
+        // Don't retry on fatal errors (1008 = policy violation / model not found)
+        if (event.code === 1008 || event.code === 1003) {
+          this.geminiConnectionFailed = true;
+        }
       });
 
       ws.addEventListener("error", (event) => {
         console.error("[CallSession] Gemini WS error:", event);
         this.geminiWs = null;
         this.geminiReady = false;
+        this.geminiConnectionFailed = true;
       });
     } catch (err) {
       console.error("[CallSession] Failed to connect to Gemini:", err);
+      this.geminiConnectionFailed = true;
     }
   }
 
@@ -173,7 +180,7 @@ export class CallSession implements DurableObject {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     // Lazy-connect Gemini if not yet connected (handles DO hibernation wake-up)
-    if (!this.geminiWs && !this.geminiConnecting) {
+    if (!this.geminiWs && !this.geminiConnecting && !this.geminiConnectionFailed) {
       console.log("[CallSession] webSocketMessage: Gemini not connected, attempting connection...");
       this.geminiConnecting = true;
       this.connectGemini().finally(() => { this.geminiConnecting = false; });

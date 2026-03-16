@@ -11,7 +11,7 @@ export function geminiWsUrl(apiToken: string): string {
 /** Build the setup message for a Gemini Audio Live session */
 export function buildSetupMessage(systemPrompt?: string): object {
   const config: GeminiSessionConfig = {
-    model: "models/gemini-2.0-flash-live-001",
+    model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
     generationConfig: {
       responseModalities: ["AUDIO"],
       speechConfig: {
