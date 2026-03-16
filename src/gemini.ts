@@ -3,8 +3,8 @@ import type { GeminiSessionConfig } from "./types";
 const GEMINI_WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
 /** Build the Gemini Audio Live WebSocket URL */
-export function geminiWsUrl(apiKey: string): string {
-  return `${GEMINI_WS_BASE}?key=${apiKey}`;
+export function geminiWsUrl(apiToken: string): string {
+  return `${GEMINI_WS_BASE}?key=${apiToken}`;
 }
 
 /** Build the setup message for a Gemini Audio Live session */

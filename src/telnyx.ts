@@ -10,7 +10,7 @@ async function telnyxRequest(
   body?: unknown
 ): Promise<Response> {
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${env.TELNYX_API_KEY}`,
+    Authorization: `Bearer ${env.TELNYX_API_TOKEN}`,
     "Content-Type": "application/json",
   };
   return fetch(`${TELNYX_API_BASE}${path}`, {

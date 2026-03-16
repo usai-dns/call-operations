@@ -2,8 +2,8 @@
 export interface Env {
   CALL_SESSION: DurableObjectNamespace;
   SMS_SESSION: DurableObjectNamespace;
-  TELNYX_API_KEY: string;
-  GEMINI_API_KEY: string;
+  TELNYX_API_TOKEN: string;
+  GEMINI_API_TOKEN: string;
   TELNYX_CONNECTION_ID: string;
   TELNYX_MESSAGING_PROFILE_ID: string;
   TELNYX_PHONE_NUMBER: string;
