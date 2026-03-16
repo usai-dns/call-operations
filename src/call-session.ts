@@ -1,10 +1,21 @@
 import type { Env, CallState } from "./types";
+import { geminiWsUrl, buildSetupMessage, parseGeminiResponse } from "./gemini";
+import { telnyxToGemini, geminiToTelnyx } from "./audio";
+
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI phone assistant. You are answering a live phone call.
+Be conversational, friendly, and concise. Keep responses brief since this is a voice conversation.
+If the caller asks who you are, say you are an AI assistant.`;
 
 /** Durable Object managing a single phone call's lifecycle and media streaming */
 export class CallSession implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
   private callState: CallState | null = null;
+
+  // WebSocket references
+  private telnyxWs: WebSocket | null = null;
+  private geminiWs: WebSocket | null = null;
+  private geminiReady = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -45,8 +56,98 @@ export class CallSession implements DurableObject {
     const [client, server] = Object.values(pair);
 
     this.state.acceptWebSocket(server);
+    this.telnyxWs = server;
+
+    // Connect to Gemini once Telnyx WS is established
+    this.connectGemini();
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Open an outbound WebSocket to Gemini Live API */
+  private async connectGemini(): Promise<void> {
+    const url = geminiWsUrl(this.env.GEMINI_API_TOKEN);
+
+    try {
+      const resp = await fetch(url, {
+        headers: { Upgrade: "websocket" },
+      });
+
+      const ws = resp.webSocket;
+      if (!ws) {
+        console.error("[CallSession] Failed to establish Gemini WebSocket — no webSocket on response");
+        return;
+      }
+
+      ws.accept();
+      this.geminiWs = ws;
+
+      // Send setup message
+      const systemPrompt = this.callState?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+      const setupMsg = buildSetupMessage(systemPrompt);
+      ws.send(JSON.stringify(setupMsg));
+      console.log("[CallSession] Gemini setup message sent");
+
+      // Listen for Gemini responses
+      ws.addEventListener("message", (event) => {
+        this.handleGeminiMessage(event.data as string);
+      });
+
+      ws.addEventListener("close", (event) => {
+        console.log(`[CallSession] Gemini WS closed: ${event.code} ${event.reason}`);
+        this.geminiWs = null;
+        this.geminiReady = false;
+      });
+
+      ws.addEventListener("error", (event) => {
+        console.error("[CallSession] Gemini WS error:", event);
+        this.geminiWs = null;
+        this.geminiReady = false;
+      });
+    } catch (err) {
+      console.error("[CallSession] Failed to connect to Gemini:", err);
+    }
+  }
+
+  /** Process a message received from Gemini */
+  private handleGeminiMessage(raw: string): void {
+    const parsed = parseGeminiResponse(raw);
+
+    switch (parsed.type) {
+      case "setup_complete":
+        console.log("[CallSession] Gemini setup complete — ready for audio");
+        this.geminiReady = true;
+        break;
+
+      case "audio":
+        if (parsed.audioData && this.telnyxWs) {
+          // Convert Gemini PCM 24kHz → Telnyx mu-law 8kHz and send back
+          try {
+            const mulawBase64 = geminiToTelnyx(parsed.audioData);
+            this.telnyxWs.send(JSON.stringify({
+              event: "media",
+              media: {
+                track: "outbound",
+                payload: mulawBase64,
+              },
+            }));
+          } catch (err) {
+            console.error("[CallSession] Audio conversion error (Gemini→Telnyx):", err);
+          }
+        }
+        break;
+
+      case "text":
+        console.log(`[CallSession] Gemini text: ${parsed.text}`);
+        break;
+
+      case "turn_complete":
+        console.log("[CallSession] Gemini turn complete");
+        break;
+
+      default:
+        break;
+    }
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -54,12 +155,31 @@ export class CallSession implements DurableObject {
     if (typeof message === "string") {
       try {
         const data = JSON.parse(message);
-        console.log(`[CallSession] WS message event: ${data.event}`);
 
-        if (data.event === "media") {
-          // Forward audio to Gemini (will be implemented)
-          // For now, log it
-          console.log(`[CallSession] Received media chunk, track: ${data.media?.track}`);
+        if (data.event === "media" && data.media?.payload) {
+          // Forward audio from Telnyx to Gemini
+          if (this.geminiWs && this.geminiReady) {
+            try {
+              const pcmBase64 = telnyxToGemini(data.media.payload);
+              this.geminiWs.send(JSON.stringify({
+                realtimeInput: {
+                  mediaChunks: [{
+                    mimeType: "audio/pcm;rate=16000",
+                    data: pcmBase64,
+                  }],
+                },
+              }));
+            } catch (err) {
+              console.error("[CallSession] Audio conversion error (Telnyx→Gemini):", err);
+            }
+          }
+        } else if (data.event === "start") {
+          console.log(`[CallSession] Telnyx stream started, streamId: ${data.stream_id}`);
+        } else if (data.event === "stop") {
+          console.log("[CallSession] Telnyx stream stopped");
+          this.cleanup();
+        } else {
+          console.log(`[CallSession] Telnyx WS event: ${data.event}`);
         }
       } catch {
         console.warn("[CallSession] Non-JSON WS message");
@@ -68,7 +188,8 @@ export class CallSession implements DurableObject {
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    console.log(`[CallSession] WS closed: ${code} ${reason}`);
+    console.log(`[CallSession] Telnyx WS closed: ${code} ${reason}`);
+    this.cleanup();
     if (this.callState) {
       this.callState.status = "ended";
       this.callState.endedAt = Date.now();
@@ -77,7 +198,20 @@ export class CallSession implements DurableObject {
   }
 
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
-    console.error("[CallSession] WS error:", error);
+    console.error("[CallSession] Telnyx WS error:", error);
+    this.cleanup();
+  }
+
+  /** Clean up Gemini connection when call ends */
+  private cleanup(): void {
+    if (this.geminiWs) {
+      try {
+        this.geminiWs.close(1000, "call ended");
+      } catch { /* ignore */ }
+      this.geminiWs = null;
+      this.geminiReady = false;
+    }
+    this.telnyxWs = null;
   }
 
   private async handleEvent(request: Request): Promise<Response> {
@@ -113,6 +247,7 @@ export class CallSession implements DurableObject {
           this.callState.endedAt = Date.now();
           await this.state.storage.put("callState", this.callState);
         }
+        this.cleanup();
         break;
 
       case "call.streaming.started":

@@ -20,5 +20,11 @@ new_classes = ["CallSession", "SmsSession"]
 # TELNYX_MESSAGING_PROFILE_ID - Telnyx messaging profile ID
 # TELNYX_PHONE_NUMBER - Telnyx phone number (E.164)
 
+[observability]
+[observability.logs]
+enabled = true
+[observability.traces]
+enabled = true
+
 [vars]
 # These will be overridden by secrets in production if set
