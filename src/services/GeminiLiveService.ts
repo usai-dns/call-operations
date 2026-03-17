@@ -56,7 +56,8 @@ export class GeminiLiveService {
 	}
 
 	private sendSetup(): void {
-		const model = this.config.model || DEFAULT_GEMINI_MODEL;
+		const rawModel = this.config.model || DEFAULT_GEMINI_MODEL;
+		const model = rawModel.startsWith('models/') ? rawModel : `models/${rawModel}`;
 		const voice = this.config.voice || DEFAULT_GEMINI_VOICE;
 
 		const functionDeclarations = this.config.tools?.map(tool => ({
@@ -77,7 +78,6 @@ export class GeminiLiveService {
 					},
 					temperature: this.config.settings?.temperature ?? DEFAULT_TEMPERATURE,
 					thinkingConfig: { thinkingBudget: DEFAULT_THINKING_BUDGET },
-					proactivity: { proactiveAudio: true }
 				},
 				systemInstruction: {
 					parts: [{ text: this.config.systemInstruction }]
@@ -89,8 +89,7 @@ export class GeminiLiveService {
 				outputAudioTranscription: {},
 				realtimeInputConfig: {
 					automaticActivityDetection: { disabled: true }
-				},
-				enableAffectiveDialog: true
+				}
 			}
 		};
 

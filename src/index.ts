@@ -42,7 +42,7 @@ export default {
 				}
 
 				const telnyx = new TelnyxService(env.TELNYX_API_KEY, env.TELNYX_CONNECTION_ID);
-				const webhookUrl = url.origin;
+				const webhookUrl = url.origin.replace(/^http:/, 'https:');
 				const from = body.from ?? env.TELNYX_PHONE_NUMBER;
 
 				// Dial via Telnyx
@@ -93,7 +93,18 @@ export default {
 				const eventType = event.data?.event_type;
 				const payload = event.data?.payload as TelnyxCallPayload;
 
-				console.log(`[Webhook] ${eventType}`);
+				const webhookReceivedAt = Date.now();
+				// ngrok forwards as http — force https for Telnyx webhook URLs
+				const externalOrigin = url.origin.replace(/^http:/, 'https:');
+				console.log(`[Webhook] origin=${externalOrigin}`);
+				console.log(`[Webhook] ${eventType}`, payload ? JSON.stringify({
+					direction: (payload as any).direction,
+					call_control_id: (payload as any).call_control_id,
+					call_session_id: (payload as any).call_session_id,
+					from: (payload as any).from,
+					to: (payload as any).to,
+					state: (payload as any).state,
+				}) : 'no payload');
 
 				if (!payload) {
 					return Response.json({ ok: true });
@@ -103,11 +114,14 @@ export default {
 
 				// Inbound call — answer and init DO
 				if (eventType === 'call.initiated' && payload.direction === 'incoming') {
+					console.log(`[Webhook] Answering inbound call ${payload.call_control_id}...`);
+					const answerStart = Date.now();
 					const telnyx = new TelnyxService(env.TELNYX_API_KEY, env.TELNYX_CONNECTION_ID);
 					try {
-						await telnyx.answer(payload.call_control_id, url.origin);
+						await telnyx.answer(payload.call_control_id, externalOrigin);
+						console.log(`[Webhook] Answer succeeded in ${Date.now() - answerStart}ms`);
 					} catch (err) {
-						console.error('[Webhook] Answer failed:', err);
+						console.error(`[Webhook] Answer failed after ${Date.now() - answerStart}ms:`, err);
 					}
 
 					// Init DO with inbound config
@@ -127,7 +141,7 @@ export default {
 
 				// Call answered — start streaming
 				if (eventType === 'call.answered') {
-					const streamUrl = `${url.origin.replace(/^http/, 'ws')}/ws/call-stream/${sessionId}`;
+					const streamUrl = `${externalOrigin.replace(/^https:/, 'wss:')}/ws/call-stream/${sessionId}`;
 					const telnyx = new TelnyxService(env.TELNYX_API_KEY, env.TELNYX_CONNECTION_ID);
 					await telnyx.startStream(payload.call_control_id, streamUrl);
 				}

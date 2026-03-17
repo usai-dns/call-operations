@@ -51,5 +51,4 @@ export interface GeminiServerMessage {
 	};
 }
 
-/** Using v1alpha for affectiveDialog + proactivity features */
-export const GEMINI_WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
+export const GEMINI_WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
