@@ -1,4 +1,4 @@
-import type { CallConfig, Env, OutboundCallRequest } from './types';
+import type { CallConfig, Env, OutboundCallRequest, PipelineMode, PipelineFlags } from './types';
 
 // =============================================================================
 // Service-Level Defaults
@@ -9,6 +9,7 @@ export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-native-audio-latest';
 export const DEFAULT_GEMINI_VOICE = 'Kore';
 export const DEFAULT_TEMPERATURE = 1.0;
 export const DEFAULT_THINKING_BUDGET = 0; // Disabled for latency
+export const DEFAULT_PIPELINE: PipelineMode = 'auto-continuous-gate';
 
 export const AUDIO_SAMPLE_RATES = {
 	telnyx: 8000,     // L16 codec (telephony rate)
@@ -20,6 +21,28 @@ export const AUDIO_SAMPLE_RATES = {
 const DEFAULT_PROMPT = `You are a helpful AI phone assistant. You are answering a live phone call.
 Be conversational, friendly, and concise. Keep responses brief since this is a voice conversation.
 If the caller asks who you are, say you are an AI assistant.`;
+
+// =============================================================================
+// Pipeline Flags
+// =============================================================================
+
+const PIPELINE_FLAGS: Record<PipelineMode, PipelineFlags> = {
+	'auto-continuous-gate':    { useManualVad: false, gateAudio: false, flushBuffer: false, noiseGate: true },
+	'auto-continuous-raw':     { useManualVad: false, gateAudio: false, flushBuffer: false, noiseGate: false },
+	'manual-gated-buffer':     { useManualVad: true,  gateAudio: true,  flushBuffer: true,  noiseGate: false },
+	'manual-gated-nobuffer':   { useManualVad: true,  gateAudio: true,  flushBuffer: false, noiseGate: false },
+	'manual-continuous':       { useManualVad: true,  gateAudio: false, flushBuffer: false, noiseGate: false },
+	'manual-continuous-gate':  { useManualVad: true,  gateAudio: false, flushBuffer: false, noiseGate: true },
+};
+
+export function parsePipelineFlags(pipeline: PipelineMode): PipelineFlags {
+	const flags = PIPELINE_FLAGS[pipeline];
+	if (!flags) {
+		console.warn(`Unknown pipeline mode "${pipeline}", falling back to "${DEFAULT_PIPELINE}"`);
+		return PIPELINE_FLAGS[DEFAULT_PIPELINE];
+	}
+	return flags;
+}
 
 // =============================================================================
 // Config Resolution
@@ -39,6 +62,7 @@ export function resolveOutboundConfig(body: OutboundCallRequest, env: Env, callI
 		deepgramApiKey: env.DEEPGRAM_API_KEY,
 		connectionId: env.TELNYX_CONNECTION_ID,
 		firstMessage: body.firstMessage,
+		pipeline: body.pipeline ?? DEFAULT_PIPELINE,
 	};
 }
 
@@ -60,5 +84,6 @@ export function resolveInboundConfig(
 		deepgramApiKey: env.DEEPGRAM_API_KEY,
 		connectionId: env.TELNYX_CONNECTION_ID,
 		firstMessage: 'Hello',
+		pipeline: DEFAULT_PIPELINE,
 	};
 }

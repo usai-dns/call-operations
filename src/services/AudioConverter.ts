@@ -10,13 +10,13 @@
  */
 
 export class AudioConverter {
-	// Noise gate threshold (RMS). Must be low enough to pass all speech
-	// but high enough to gate line silence/hiss.
-	// TODO: tune based on actual telephony audio levels
+	private noiseGateEnabled = true;
 	private noiseGateThreshold = 50;
-
-	// Cached silent packet
 	private silentPacket16k: string | null = null;
+
+	setNoiseGateEnabled(enabled: boolean): void {
+		this.noiseGateEnabled = enabled;
+	}
 	/** Convert Telnyx L16/8kHz base64 → Gemini PCM/16kHz base64 (with noise gate) */
 	telnyxToGemini(l16Base64: string): string {
 		const bytes = this.base64ToUint8Array(l16Base64);
@@ -30,10 +30,9 @@ export class AudioConverter {
 		}
 
 		// Noise gate: if RMS energy is below threshold, send silence
-		// This gives Gemini's auto VAD clear silence for turn detection
 		const rms = this.computeRMS(pcm8k);
 		this.logRMS(rms);
-		if (rms < this.noiseGateThreshold) {
+		if (this.noiseGateEnabled && rms < this.noiseGateThreshold) {
 			return this.getSilentPacket(pcm8k.length * 2);
 		}
 

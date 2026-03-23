@@ -7,6 +7,7 @@ export interface GeminiLiveConfig {
 	systemInstruction: string;
 	tools?: ToolDefinition[];
 	settings?: CallSettings;
+	disableAutoVad?: boolean;
 }
 
 export interface GeminiCallbacks {

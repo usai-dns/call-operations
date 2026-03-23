@@ -1,14 +1,16 @@
-import type { Env, CallConfig, TelnyxStreamMessage, TranscriptEntry } from '../types';
+import type { Env, CallConfig, TelnyxStreamMessage, TranscriptEntry, PipelineFlags } from '../types';
 import { GeminiLiveService } from '../services/GeminiLiveService';
 import { DeepgramVADService } from '../services/DeepgramVADService';
 import { AudioConverter } from '../services/AudioConverter';
 import { TelnyxService } from '../services/TelnyxService';
 import { ToolExecutor } from '../services/ToolExecutor';
 import { HELLO_AUDIO_PCM_BASE64 } from '../audio/helloAudio';
+import { parsePipelineFlags } from '../config';
 import { logger, Logger, runWithContext } from '../utils/logger';
 
 const CONFIG_RETRY_ATTEMPTS = 10;
 const CONFIG_RETRY_DELAY_MS = 100;
+const RECENT_AUDIO_BUFFER_SIZE = 15; // ~300ms at 20ms/packet
 const END_CALL_DELAY_MS = 500;
 
 export class CallSession implements DurableObject {
@@ -24,10 +26,13 @@ export class CallSession implements DurableObject {
 
 	// State
 	private config: CallConfig | null = null;
+	private pipelineFlags: PipelineFlags = { useManualVad: false, gateAudio: false, flushBuffer: false, noiseGate: true };
 	private callControlId: string | null = null;
 	private streamId: string | null = null;
 	private telnyxWs: WebSocket | null = null;
-	private audioBuffer: string[] = [];
+	private activityStartSignaled = false;
+	private recentAudioBuffer: string[] = [];
+	private connectingBuffer: string[] = [];
 	private pendingEndCall = false;
 	private callStartTime = 0;
 	private geminiConnecting = false;
@@ -62,6 +67,7 @@ export class CallSession implements DurableObject {
 			return Response.json({
 				callId: cfg?.callId,
 				direction: cfg?.direction,
+				pipeline: cfg?.pipeline,
 				callControlId: this.callControlId,
 				geminiConnected: this.gemini?.connected ?? false,
 				deepgramConnected: this.deepgram?.connected ?? false,
@@ -90,8 +96,6 @@ export class CallSession implements DurableObject {
 		this.callStartTime = Date.now();
 
 		this.log.info('Telnyx WebSocket connected');
-
-		// Start connecting services — config may not be available yet
 		this.connectServices();
 
 		return new Response(null, { status: 101, webSocket: client });
@@ -136,26 +140,40 @@ export class CallSession implements DurableObject {
 	}
 
 	// =========================================================================
-	// Audio Pipeline (continuous audio + Gemini auto VAD + noise gate)
+	// Audio Pipeline
 	// =========================================================================
 
 	private handleAudio(l16Base64: string): void {
-		// Fork 1: Send PCM bytes to Deepgram for transcript comparison
+		// Always send to Deepgram (raw, unmodified)
 		if (this.deepgram?.connected) {
 			this.deepgram.sendAudio(this.audio.telnyxToDeepgramBytes(l16Base64));
 		}
 
-		// Fork 2: Convert and send to Gemini (continuous — Gemini handles VAD)
+		// Convert for Gemini
 		const pcmBase64 = this.audio.telnyxToGemini(l16Base64);
 
-		if (this.gemini?.connected) {
-			this.gemini.sendAudio(pcmBase64);
-		} else {
+		if (!this.gemini?.connected) {
 			// Buffer while Gemini is connecting
-			this.audioBuffer.push(pcmBase64);
-			if (this.audioBuffer.length > 500) {
-				this.audioBuffer.splice(0, this.audioBuffer.length - 500);
+			this.connectingBuffer.push(pcmBase64);
+			if (this.connectingBuffer.length > 500) {
+				this.connectingBuffer.splice(0, this.connectingBuffer.length - 500);
 			}
+			return;
+		}
+
+		if (this.pipelineFlags.gateAudio) {
+			// Gated mode: only send during activity window
+			if (this.activityStartSignaled) {
+				this.gemini.sendAudio(pcmBase64);
+			}
+			// Always maintain rolling buffer (for potential flush on speech start)
+			this.recentAudioBuffer.push(pcmBase64);
+			if (this.recentAudioBuffer.length > RECENT_AUDIO_BUFFER_SIZE) {
+				this.recentAudioBuffer.shift();
+			}
+		} else {
+			// Continuous mode: send everything
+			this.gemini.sendAudio(pcmBase64);
 		}
 	}
 
@@ -178,7 +196,6 @@ export class CallSession implements DurableObject {
 	// =========================================================================
 
 	private async connectServices(): Promise<void> {
-		// Load config — may need to retry if POST /init hasn't arrived yet
 		if (!this.config) {
 			this.config = await this.loadConfigWithRetry();
 		}
@@ -187,13 +204,15 @@ export class CallSession implements DurableObject {
 			return;
 		}
 
+		// Resolve pipeline flags
+		this.pipelineFlags = parsePipelineFlags(this.config.pipeline);
+		this.audio.setNoiseGateEnabled(this.pipelineFlags.noiseGate);
+		this.log.info('Pipeline mode', { pipeline: this.config.pipeline, flags: this.pipelineFlags });
+
 		this.log = this.log.withCallContext({ callId: this.config.callId });
 		this.telnyx = new TelnyxService(this.config.telnyxApiKey, this.config.connectionId);
 
-		// Connect Deepgram first (quick, needed before audio arrives)
 		await this.connectDeepgram();
-
-		// Connect Gemini (slower, may take a moment)
 		await this.connectGemini();
 	}
 
@@ -216,10 +235,27 @@ export class CallSession implements DurableObject {
 			await this.deepgram.connect({
 				onSpeechStarted: () => {
 					this.log.debug('Speech started (Deepgram)');
+
+					if (this.pipelineFlags.useManualVad && this.gemini?.connected) {
+						this.gemini.signalActivityStart();
+						this.activityStartSignaled = true;
+
+						if (this.pipelineFlags.flushBuffer) {
+							for (const chunk of this.recentAudioBuffer) {
+								this.gemini.sendAudio(chunk);
+							}
+							this.recentAudioBuffer = [];
+						}
+					}
 				},
 
 				onUtteranceEnd: (transcript: string) => {
 					this.log.debug('Utterance end (Deepgram)', { transcript: transcript.slice(0, 100) });
+
+					if (this.pipelineFlags.useManualVad && this.gemini?.connected && this.activityStartSignaled) {
+						this.gemini.signalActivityEnd();
+						this.activityStartSignaled = false;
+					}
 				},
 
 				onEndOfTurn: (transcript: string) => {
@@ -250,6 +286,7 @@ export class CallSession implements DurableObject {
 				voice: this.config.voice,
 				systemInstruction: this.config.prompt,
 				tools: this.tools.getDefinitions(),
+				disableAutoVad: this.pipelineFlags.useManualVad,
 			});
 
 			await this.gemini.connect({
@@ -269,23 +306,34 @@ export class CallSession implements DurableObject {
 				onSetupComplete: () => {
 					this.log.info('Gemini setup complete');
 
-					// Discard buffered audio — stale burst confuses auto VAD
-					if (this.audioBuffer.length > 0) {
-						this.log.info('Discarding stale audio buffer', { packets: this.audioBuffer.length });
-						this.audioBuffer = [];
+					// Discard stale connecting buffer
+					if (this.connectingBuffer.length > 0) {
+						this.log.info('Discarding stale audio buffer', { packets: this.connectingBuffer.length });
+						this.connectingBuffer = [];
 					}
 
 					// For inbound calls, send pre-recorded "Hello" to trigger greeting
 					if (this.config?.direction === 'inbound') {
 						this.log.info('Inbound call — sending hello audio to trigger greeting');
-						this.gemini!.sendAudio(HELLO_AUDIO_PCM_BASE64);
+						if (this.pipelineFlags.useManualVad) {
+							setTimeout(() => {
+								if (this.gemini?.connected) {
+									this.gemini.signalActivityStart();
+									this.gemini.sendAudio(HELLO_AUDIO_PCM_BASE64);
+									setTimeout(() => {
+										this.gemini?.signalActivityEnd();
+									}, 100);
+								}
+							}, 200);
+						} else {
+							this.gemini!.sendAudio(HELLO_AUDIO_PCM_BASE64);
+						}
 					}
 				},
 
 				onTurnComplete: () => {
 					this.log.debug('Turn complete');
 
-					// Handle pending end_call
 					if (this.pendingEndCall) {
 						this.executeEndCall();
 					}
@@ -332,7 +380,6 @@ export class CallSession implements DurableObject {
 			},
 		});
 
-		// Send tool response back to Gemini
 		if (this.gemini?.connected) {
 			this.gemini.sendToolResponse(id, name, result.data ?? { status: result.success ? 'ok' : 'error' });
 		}
@@ -345,7 +392,6 @@ export class CallSession implements DurableObject {
 	private executeEndCall(): void {
 		this.log.info('Executing end call');
 
-		// Telnyx has no mark mechanism, so use a simple delay
 		setTimeout(async () => {
 			try {
 				if (this.callControlId && this.telnyx) {
@@ -399,7 +445,6 @@ export class CallSession implements DurableObject {
 	// =========================================================================
 
 	private cleanup(): void {
-		// Persist transcripts to storage before clearing services
 		if (this.transcripts.length > 0) {
 			this.doState.storage.put('transcripts', this.transcripts);
 		}
@@ -413,7 +458,9 @@ export class CallSession implements DurableObject {
 			this.deepgram = null;
 		}
 		this.telnyxWs = null;
-		this.audioBuffer = [];
+		this.activityStartSignaled = false;
+		this.recentAudioBuffer = [];
+		this.connectingBuffer = [];
 		this.pendingEndCall = false;
 	}
 }

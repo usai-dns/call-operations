@@ -86,7 +86,12 @@ export class GeminiLiveService {
 					? [{ functionDeclarations }]
 					: undefined,
 				inputAudioTranscription: {},
-				outputAudioTranscription: {}
+				outputAudioTranscription: {},
+				...(this.config.disableAutoVad ? {
+					realtimeInputConfig: {
+						automaticActivityDetection: { disabled: true }
+					}
+				} : {})
 			}
 		};
 
