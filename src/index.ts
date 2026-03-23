@@ -157,6 +157,73 @@ export default {
 				return Response.json({ ok: true });
 			}
 
+			// ── Sim Sweep Webhook (test number answers with scripted TTS) ──
+			if (path === '/webhook/sim' && request.method === 'POST') {
+				const event = await request.json() as TelnyxWebhookEvent;
+				const eventType = event.data?.event_type;
+				const payload = event.data?.payload as TelnyxCallPayload;
+
+				if (!payload) return Response.json({ ok: true });
+
+				const simHeaders = {
+					'Authorization': `Bearer ${env.TELNYX_API_KEY}`,
+					'Content-Type': 'application/json',
+				};
+				const simWebhookUrl = url.origin.replace(/^http:/, 'https:') + '/webhook/sim';
+
+				if (eventType === 'call.initiated' && payload.direction === 'incoming') {
+					console.log(`[Sim] Answering sim call ${payload.call_control_id}`);
+					await fetch(`https://api.telnyx.com/v2/calls/${payload.call_control_id}/actions/answer`, {
+						method: 'POST',
+						headers: simHeaders,
+						body: JSON.stringify({ webhook_url: simWebhookUrl, webhook_url_method: 'POST' }),
+					});
+				}
+
+				if (eventType === 'call.answered') {
+					console.log(`[Sim] Playing phrase 1 on ${payload.call_control_id}`);
+					await fetch(`https://api.telnyx.com/v2/calls/${payload.call_control_id}/actions/speak`, {
+						method: 'POST',
+						headers: simHeaders,
+						body: JSON.stringify({
+							payload: 'Hello, how are you doing today?',
+							voice: 'female',
+							language: 'en-US',
+						}),
+					});
+				}
+
+				if (eventType === 'call.speak.ended') {
+					// Track phrase count via client_state
+					const phrasesDone = payload.client_state
+						? parseInt(atob(payload.client_state), 10) || 0
+						: 0;
+
+					if (phrasesDone === 0) {
+						console.log(`[Sim] Phrase 1 done, speaking phrase 2`);
+						await fetch(`https://api.telnyx.com/v2/calls/${payload.call_control_id}/actions/speak`, {
+							method: 'POST',
+							headers: simHeaders,
+							body: JSON.stringify({
+								payload: 'Can you tell me about cats and dogs?',
+								voice: 'female',
+								language: 'en-US',
+								client_state: btoa('1'),
+							}),
+						});
+					} else {
+						console.log(`[Sim] All phrases done, hanging up`);
+						await fetch(`https://api.telnyx.com/v2/calls/${payload.call_control_id}/actions/hangup`, {
+							method: 'POST',
+							headers: simHeaders,
+							body: JSON.stringify({}),
+						});
+					}
+				}
+
+				return Response.json({ ok: true });
+			}
+
 			// ── Telnyx SMS Webhook ──
 			if (path === '/webhook/sms' && request.method === 'POST') {
 				const event = await request.json() as TelnyxWebhookEvent;
