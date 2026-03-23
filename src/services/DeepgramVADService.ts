@@ -117,13 +117,6 @@ export class DeepgramVADService {
 						if (turnInfo.transcript) {
 							this.currentTurnTranscript = turnInfo.transcript;
 						}
-						if (this.turnIndex === 0 && turnInfo.end_of_turn_confidence > 0.8) {
-							this.clearFirstTurnTimer();
-							if (this.isSpeaking) {
-								this.isSpeaking = false;
-								this.callbacks.onUtteranceEnd?.(this.currentTurnTranscript);
-							}
-						}
 						break;
 
 					case 'EagerEndOfTurn':
@@ -146,7 +139,12 @@ export class DeepgramVADService {
 						_logger.debug('EndOfTurn', { context: 'DeepgramVAD', transcript: finalTranscript });
 						if (this.isSpeaking) {
 							this.isSpeaking = false;
-							this.callbacks.onUtteranceEnd?.(finalTranscript);
+							// Delay 200ms to let in-flight audio packets flush to Gemini
+							// before signaling utterance end (which triggers activityEnd)
+							const transcript = finalTranscript;
+							setTimeout(() => {
+								this.callbacks.onUtteranceEnd?.(transcript);
+							}, 200);
 						}
 						this.callbacks.onEndOfTurn?.(finalTranscript);
 						this.currentTurnTranscript = '';

@@ -1,4 +1,4 @@
-import type { Env, CallConfig, TelnyxStreamMessage } from '../types';
+import type { Env, CallConfig, TelnyxStreamMessage, TranscriptEntry } from '../types';
 import { GeminiLiveService } from '../services/GeminiLiveService';
 import { DeepgramVADService } from '../services/DeepgramVADService';
 import { AudioConverter } from '../services/AudioConverter';
@@ -35,6 +35,7 @@ export class CallSession implements DurableObject {
 	private pendingEndCall = false;
 	private callStartTime = 0;
 	private geminiConnecting = false;
+	private transcripts: TranscriptEntry[] = [];
 	private log: Logger;
 
 	constructor(state: DurableObjectState, env: Env) {
@@ -59,6 +60,9 @@ export class CallSession implements DurableObject {
 
 		if (url.pathname === '/state') {
 			const cfg = this.config ?? await this.doState.storage.get<CallConfig>('config');
+			const txs = this.transcripts.length > 0
+				? this.transcripts
+				: (await this.doState.storage.get<TranscriptEntry[]>('transcripts')) ?? [];
 			return Response.json({
 				callId: cfg?.callId,
 				direction: cfg?.direction,
@@ -67,6 +71,7 @@ export class CallSession implements DurableObject {
 				deepgramConnected: this.deepgram?.connected ?? false,
 				isSpeaking: this.isSpeaking,
 				pendingEndCall: this.pendingEndCall,
+				transcripts: txs,
 			});
 		}
 
@@ -252,7 +257,9 @@ export class CallSession implements DurableObject {
 
 				onEndOfTurn: (transcript: string) => {
 					this.log.debug('End of turn', { transcript: transcript.slice(0, 100) });
-					// Hook point for future transcript/monitor features
+					if (transcript) {
+						this.transcripts.push({ source: 'deepgram', role: 'user', text: transcript, timestamp: Date.now() });
+					}
 				},
 
 				onError: (error: Error) => {
@@ -289,6 +296,7 @@ export class CallSession implements DurableObject {
 
 				onTranscript: (text: string, role: 'user' | 'model') => {
 					this.log.debug(`${role === 'model' ? 'AI' : 'User'} said`, { text: text.slice(0, 200) });
+					this.transcripts.push({ source: 'gemini', role, text, timestamp: Date.now() });
 				},
 
 				onSetupComplete: () => {
@@ -304,9 +312,15 @@ export class CallSession implements DurableObject {
 					// For inbound calls, send pre-recorded "Hello" to trigger greeting
 					if (this.config?.direction === 'inbound') {
 						this.log.info('Inbound call — sending hello audio to trigger greeting');
-						this.gemini!.signalActivityStart();
-						this.gemini!.sendAudio(HELLO_AUDIO_PCM_BASE64);
-						this.gemini!.signalActivityEnd();
+						setTimeout(() => {
+							if (this.gemini?.connected) {
+								this.gemini.signalActivityStart();
+								this.gemini.sendAudio(HELLO_AUDIO_PCM_BASE64);
+								setTimeout(() => {
+									this.gemini?.signalActivityEnd();
+								}, 100);
+							}
+						}, 200);
 					}
 				},
 
@@ -427,6 +441,11 @@ export class CallSession implements DurableObject {
 	// =========================================================================
 
 	private cleanup(): void {
+		// Persist transcripts to storage before clearing services
+		if (this.transcripts.length > 0) {
+			this.doState.storage.put('transcripts', this.transcripts);
+		}
+
 		if (this.gemini) {
 			try { this.gemini.close(); } catch { /* ignore */ }
 			this.gemini = null;
