@@ -41,7 +41,7 @@ export class DeepgramVADService {
 
 		const url = 'wss://api.deepgram.com/v2/listen?' + new URLSearchParams({
 			model: 'flux-general-en',
-			encoding: 'mulaw',
+			encoding: 'linear16',
 			sample_rate: '8000',
 			eager_eot_threshold: '0.5',
 			eot_threshold: '0.8',
@@ -163,7 +163,7 @@ export class DeepgramVADService {
 		}
 	}
 
-	sendAudio(mulawBase64: string): void {
+	sendAudio(pcmBuffer: ArrayBuffer): void {
 		if (!this.ws || !this.isConnected) return;
 
 		try {
@@ -175,12 +175,7 @@ export class DeepgramVADService {
 				}, this.MISSED_FIRST_TURN_CHECK_MS);
 			}
 
-			const binaryString = atob(mulawBase64);
-			const bytes = new Uint8Array(binaryString.length);
-			for (let i = 0; i < binaryString.length; i++) {
-				bytes[i] = binaryString.charCodeAt(i);
-			}
-			this.ws.send(bytes.buffer);
+			this.ws.send(pcmBuffer);
 		} catch (error) {
 			_logger.error('Error sending audio', { context: 'DeepgramVAD', error: String(error) });
 		}

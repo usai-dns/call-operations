@@ -11,10 +11,10 @@ export const DEFAULT_TEMPERATURE = 1.0;
 export const DEFAULT_THINKING_BUDGET = 0; // Disabled for latency
 
 export const AUDIO_SAMPLE_RATES = {
-	telnyx: 8000,
+	telnyx: 8000,     // L16 codec (telephony rate)
 	geminiIn: 16000,
 	geminiOut: 24000,
-	deepgram: 8000,
+	deepgram: 8000,   // linear16
 } as const;
 
 const DEFAULT_PROMPT = `You are a helpful AI phone assistant. You are answering a live phone call.

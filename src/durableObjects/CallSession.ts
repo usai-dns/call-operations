@@ -144,14 +144,14 @@ export class CallSession implements DurableObject {
 	// Audio Pipeline
 	// =========================================================================
 
-	private handleAudio(mulawBase64: string): void {
-		// Fork 1: Send raw mulaw to Deepgram (no conversion needed)
+	private handleAudio(l16Base64: string): void {
+		// Fork 1: Convert L16 (BE) to LE PCM bytes for Deepgram
 		if (this.deepgram?.connected) {
-			this.deepgram.sendAudio(mulawBase64);
+			this.deepgram.sendAudio(this.audio.telnyxToDeepgramBytes(l16Base64));
 		}
 
-		// Fork 2: Convert to PCM for Gemini
-		const pcmBase64 = this.audio.mulawToGemini(mulawBase64);
+		// Fork 2: Convert L16 (BE) to LE PCM base64 for Gemini (same sample rate)
+		const pcmBase64 = this.audio.telnyxToGemini(l16Base64);
 
 		// If activity started (user speaking), send to Gemini
 		if (this.activityStartSignaled && this.gemini?.connected) {
@@ -178,10 +178,10 @@ export class CallSession implements DurableObject {
 		if (!this.telnyxWs) return;
 
 		try {
-			const mulawBase64 = this.audio.geminiToMulaw(pcmBase64);
+			const l16Base64 = this.audio.geminiToTelnyx(pcmBase64);
 			this.telnyxWs.send(JSON.stringify({
 				event: 'media',
-				media: { payload: mulawBase64 },
+				media: { payload: l16Base64 },
 			}));
 		} catch (err) {
 			this.log.error('Audio conversion error (Gemini→Telnyx)', { error: String(err) });

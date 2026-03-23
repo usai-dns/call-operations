@@ -60,7 +60,7 @@ export class TelnyxService {
 				stream_url: streamUrl,
 				stream_track: 'inbound_track',
 				stream_bidirectional_mode: 'rtp',
-				stream_bidirectional_codec: 'PCMU',
+				stream_bidirectional_codec: 'L16',
 				enable_dialogflow: false,
 			}
 		);
