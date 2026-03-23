@@ -136,7 +136,7 @@ export class CallSession implements DurableObject {
 	}
 
 	// =========================================================================
-	// Audio Pipeline (Gemini auto VAD — send all audio continuously)
+	// Audio Pipeline (continuous audio + Gemini auto VAD + noise gate)
 	// =========================================================================
 
 	private handleAudio(l16Base64: string): void {
@@ -269,12 +269,9 @@ export class CallSession implements DurableObject {
 				onSetupComplete: () => {
 					this.log.info('Gemini setup complete');
 
-					// Flush buffered audio now that Gemini is ready
+					// Discard buffered audio — stale burst confuses auto VAD
 					if (this.audioBuffer.length > 0) {
-						this.log.info('Flushing audio buffer', { packets: this.audioBuffer.length });
-						for (const chunk of this.audioBuffer) {
-							this.gemini!.sendAudio(chunk);
-						}
+						this.log.info('Discarding stale audio buffer', { packets: this.audioBuffer.length });
 						this.audioBuffer = [];
 					}
 

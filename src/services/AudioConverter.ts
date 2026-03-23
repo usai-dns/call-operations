@@ -10,7 +10,14 @@
  */
 
 export class AudioConverter {
-	/** Convert Telnyx L16/8kHz base64 → Gemini PCM/16kHz base64 */
+	// Noise gate threshold (RMS). Must be low enough to pass all speech
+	// but high enough to gate line silence/hiss.
+	// TODO: tune based on actual telephony audio levels
+	private noiseGateThreshold = 50;
+
+	// Cached silent packet
+	private silentPacket16k: string | null = null;
+	/** Convert Telnyx L16/8kHz base64 → Gemini PCM/16kHz base64 (with noise gate) */
 	telnyxToGemini(l16Base64: string): string {
 		const bytes = this.base64ToUint8Array(l16Base64);
 
@@ -20,6 +27,14 @@ export class AudioConverter {
 		const pcm8k = new Int16Array(sampleCount);
 		for (let i = 0; i < sampleCount; i++) {
 			pcm8k[i] = view.getInt16(i * 2, true);
+		}
+
+		// Noise gate: if RMS energy is below threshold, send silence
+		// This gives Gemini's auto VAD clear silence for turn detection
+		const rms = this.computeRMS(pcm8k);
+		this.logRMS(rms);
+		if (rms < this.noiseGateThreshold) {
+			return this.getSilentPacket(pcm8k.length * 2);
 		}
 
 		// Upsample 8kHz → 16kHz (linear interpolation)
@@ -39,6 +54,37 @@ export class AudioConverter {
 		}
 
 		return this.uint8ArrayToBase64(outBytes);
+	}
+
+	private computeRMS(samples: Int16Array): number {
+		let sum = 0;
+		for (let i = 0; i < samples.length; i++) {
+			sum += samples[i] * samples[i];
+		}
+		return Math.sqrt(sum / samples.length);
+	}
+
+	// Log RMS every ~1 second (50 packets at 20ms each)
+	private rmsLogCounter = 0;
+	private rmsMin = Infinity;
+	private rmsMax = 0;
+	private logRMS(rms: number): void {
+		this.rmsLogCounter++;
+		if (rms < this.rmsMin) this.rmsMin = rms;
+		if (rms > this.rmsMax) this.rmsMax = rms;
+		if (this.rmsLogCounter % 50 === 0) {
+			console.log(`[AudioConverter] RMS range over last 1s: min=${this.rmsMin.toFixed(0)} max=${this.rmsMax.toFixed(0)} threshold=${this.noiseGateThreshold}`);
+			this.rmsMin = Infinity;
+			this.rmsMax = 0;
+		}
+	}
+
+	private getSilentPacket(upsampledSamples: number): string {
+		if (this.silentPacket16k) return this.silentPacket16k;
+		// Cache a silent packet (all zeros)
+		const bytes = new Uint8Array(upsampledSamples * 2);
+		this.silentPacket16k = this.uint8ArrayToBase64(bytes);
+		return this.silentPacket16k;
 	}
 
 	/** Convert Telnyx L16/8kHz base64 → LE PCM bytes for Deepgram (passthrough) */
