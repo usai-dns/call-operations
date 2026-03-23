@@ -158,6 +158,7 @@ export interface CallSettings {
 export type PipelineMode =
 	| 'auto-continuous-gate'      // Gemini auto VAD, continuous audio, noise gate
 	| 'auto-continuous-raw'       // Gemini auto VAD, continuous audio, no gate
+	| 'auto-tuned-telephony'      // Gemini auto VAD (LOW sensitivity), noise gate, half-duplex
 	| 'manual-gated-buffer'       // Deepgram manual VAD, gated audio, 300ms buffer flush
 	| 'manual-gated-nobuffer'     // Deepgram manual VAD, gated audio, no buffer flush
 	| 'manual-continuous'         // Deepgram manual VAD, continuous audio, no gate

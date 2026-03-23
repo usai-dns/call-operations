@@ -8,6 +8,7 @@ export interface GeminiLiveConfig {
 	tools?: ToolDefinition[];
 	settings?: CallSettings;
 	disableAutoVad?: boolean;
+	telephonyVad?: boolean;  // Use LOW sensitivity + telephony-tuned params
 }
 
 export interface GeminiCallbacks {

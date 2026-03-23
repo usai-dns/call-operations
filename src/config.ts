@@ -29,6 +29,7 @@ If the caller asks who you are, say you are an AI assistant.`;
 const PIPELINE_FLAGS: Record<PipelineMode, PipelineFlags> = {
 	'auto-continuous-gate':    { useManualVad: false, gateAudio: false, flushBuffer: false, noiseGate: true },
 	'auto-continuous-raw':     { useManualVad: false, gateAudio: false, flushBuffer: false, noiseGate: false },
+	'auto-tuned-telephony':    { useManualVad: false, gateAudio: false, flushBuffer: false, noiseGate: true },
 	'manual-gated-buffer':     { useManualVad: true,  gateAudio: true,  flushBuffer: true,  noiseGate: false },
 	'manual-gated-nobuffer':   { useManualVad: true,  gateAudio: true,  flushBuffer: false, noiseGate: false },
 	'manual-continuous':       { useManualVad: true,  gateAudio: false, flushBuffer: false, noiseGate: false },

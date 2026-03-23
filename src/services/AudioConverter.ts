@@ -11,7 +11,7 @@
 
 export class AudioConverter {
 	private noiseGateEnabled = true;
-	private noiseGateThreshold = 50;
+	private noiseGateThreshold = 15;
 	private silentPacket16k: string | null = null;
 
 	setNoiseGateEnabled(enabled: boolean): void {

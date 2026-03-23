@@ -31,6 +31,7 @@ export class CallSession implements DurableObject {
 	private streamId: string | null = null;
 	private telnyxWs: WebSocket | null = null;
 	private activityStartSignaled = false;
+	private geminiSpeaking = false;
 	private recentAudioBuffer: string[] = [];
 	private connectingBuffer: string[] = [];
 	private pendingEndCall = false;
@@ -153,11 +154,17 @@ export class CallSession implements DurableObject {
 		const pcmBase64 = this.audio.telnyxToGemini(l16Base64);
 
 		if (!this.gemini?.connected) {
-			// Buffer while Gemini is connecting
 			this.connectingBuffer.push(pcmBase64);
 			if (this.connectingBuffer.length > 500) {
 				this.connectingBuffer.splice(0, this.connectingBuffer.length - 500);
 			}
+			return;
+		}
+
+		// Half-duplex echo suppression: while Gemini is speaking, don't send
+		// audio or accumulate buffer (it's echo of Gemini's own voice).
+		// Exception: if Deepgram detects speech (barge-in), let it through.
+		if (this.geminiSpeaking && !this.deepgram?.speaking) {
 			return;
 		}
 
@@ -166,7 +173,7 @@ export class CallSession implements DurableObject {
 			if (this.activityStartSignaled) {
 				this.gemini.sendAudio(pcmBase64);
 			}
-			// Always maintain rolling buffer (for potential flush on speech start)
+			// Accumulate rolling buffer (now echo-free since we suppress above)
 			this.recentAudioBuffer.push(pcmBase64);
 			if (this.recentAudioBuffer.length > RECENT_AUDIO_BUFFER_SIZE) {
 				this.recentAudioBuffer.shift();
@@ -287,10 +294,12 @@ export class CallSession implements DurableObject {
 				systemInstruction: this.config.prompt,
 				tools: this.tools.getDefinitions(),
 				disableAutoVad: this.pipelineFlags.useManualVad,
+				telephonyVad: this.config.pipeline === 'auto-tuned-telephony',
 			});
 
 			await this.gemini.connect({
 				onAudio: (pcmBase64: string) => {
+					this.geminiSpeaking = true;
 					this.handleGeminiAudio(pcmBase64);
 				},
 
@@ -333,6 +342,8 @@ export class CallSession implements DurableObject {
 
 				onTurnComplete: () => {
 					this.log.debug('Turn complete');
+					// 150ms tail suppression — echo from last packets still in-flight
+					setTimeout(() => { this.geminiSpeaking = false; }, 150);
 
 					if (this.pendingEndCall) {
 						this.executeEndCall();
@@ -341,6 +352,7 @@ export class CallSession implements DurableObject {
 
 				onInterrupted: () => {
 					this.log.debug('AI interrupted by user');
+					this.geminiSpeaking = false;
 				},
 
 				onError: (error: Error) => {
@@ -459,6 +471,7 @@ export class CallSession implements DurableObject {
 		}
 		this.telnyxWs = null;
 		this.activityStartSignaled = false;
+		this.geminiSpeaking = false;
 		this.recentAudioBuffer = [];
 		this.connectingBuffer = [];
 		this.pendingEndCall = false;

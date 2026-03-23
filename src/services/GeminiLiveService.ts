@@ -91,6 +91,16 @@ export class GeminiLiveService {
 					realtimeInputConfig: {
 						automaticActivityDetection: { disabled: true }
 					}
+				} : this.config.telephonyVad ? {
+					realtimeInputConfig: {
+						automaticActivityDetection: {
+							disabled: false,
+							startOfSpeechSensitivity: 'START_SENSITIVITY_LOW',
+							endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
+							prefixPaddingMs: 200,
+							silenceDurationMs: 500,
+						}
+					}
 				} : {})
 			}
 		};
